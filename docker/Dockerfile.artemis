@@ -1,0 +1,17 @@
+FROM quay.io/artemiscloud/activemq-artemis-broker:latest
+
+# Create a custom broker.xml with QIT-specific configuration
+# This will be merged with the default configuration
+
+USER root
+
+# Create init script to modify broker.xml after instance creation
+RUN mkdir -p /opt/configure-broker
+
+COPY configure-broker.sh /opt/configure-broker/
+RUN chmod +x /opt/configure-broker/configure-broker.sh
+
+USER jboss
+
+# Override entrypoint to configure before starting
+ENTRYPOINT ["/opt/configure-broker/configure-broker.sh"]

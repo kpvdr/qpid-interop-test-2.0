@@ -1,0 +1,16 @@
+{
+  "name": "qit-rhea-shim",
+  "version": "2.0.0",
+  "description": "QIT JavaScript/Rhea AMQP shim",
+  "main": "shim.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["amqp", "qit", "interop", "rhea"],
+  "author": "Red Hat AMQ Team",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "rhea": "^3.0.0",
+    "uuid": "^9.0.0"
+  }
+}

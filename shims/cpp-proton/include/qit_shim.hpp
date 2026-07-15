@@ -1,0 +1,86 @@
+/*
+ * QIT C++ Proton Shim
+ *
+ * AMQP 1.0 interoperability test shim using Qpid Proton C++
+ */
+
+#pragma once
+
+#include <proton/connection.hpp>
+#include <proton/container.hpp>
+#include <proton/message.hpp>
+#include <proton/messaging_handler.hpp>
+#include <proton/receiver.hpp>
+#include <proton/sender.hpp>
+#include <json/json.h>
+
+#include <string>
+#include <vector>
+
+namespace qit {
+
+// Sender handler - sends messages
+class Sender : public proton::messaging_handler {
+public:
+    Sender(const std::string& broker_url,
+           const std::string& queue_name,
+           const std::string& amqp_type,
+           const std::string& test_data_json);
+
+    void on_container_start(proton::container& c) override;
+    void on_sendable(proton::sender& s) override;
+    void on_tracker_accept(proton::tracker& t) override;
+    void on_transport_error(proton::transport& t) override;
+    void on_error(const proton::error_condition& ec) override;
+
+private:
+    std::string broker_url_;
+    std::string queue_name_;
+    std::string amqp_type_;
+    Json::Value test_values_;
+    size_t sent_count_;
+    size_t confirmed_count_;
+};
+
+// Receiver handler - receives messages
+class Receiver : public proton::messaging_handler {
+public:
+    Receiver(const std::string& broker_url,
+             const std::string& queue_name,
+             size_t count,
+             int timeout_sec = 30);
+
+    void on_container_start(proton::container& c) override;
+    void on_message(proton::delivery& d, proton::message& m) override;
+    void on_transport_error(proton::transport& t) override;
+    void on_error(const proton::error_condition& ec) override;
+
+    const Json::Value& get_messages() const { return received_messages_; }
+
+private:
+    std::string broker_url_;
+    std::string queue_name_;
+    size_t expected_count_;
+    size_t received_count_;
+    int timeout_sec_;
+    bool output_sent_;
+    Json::Value received_messages_;
+
+    void on_timeout();
+    void output_result();
+};
+
+// Type codec - converts between AMQP values and JSON
+class TypeCodec {
+public:
+    // Encode JSON test value to AMQP value
+    static proton::value encode(const std::string& amqp_type, const Json::Value& test_value);
+
+    // Decode AMQP value to JSON
+    static Json::Value decode(const proton::value& amqp_value);
+
+    // Infer AMQP type name from proton::value
+    static std::string infer_type(const proton::value& amqp_value);
+};
+
+} // namespace qit

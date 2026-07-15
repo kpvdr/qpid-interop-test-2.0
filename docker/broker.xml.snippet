@@ -1,0 +1,14 @@
+<!-- QIT Auto-create configuration for Artemis -->
+<!-- Insert this into address-settings section of broker.xml -->
+
+<address-setting match="qit.#">
+   <auto-create-addresses>true</auto-create-addresses>
+   <auto-create-queues>true</auto-create-queues>
+   <default-address-routing-type>ANYCAST</default-address-routing-type>
+</address-setting>
+
+<address-setting match="test.#">
+   <auto-create-addresses>true</auto-create-addresses>
+   <auto-create-queues>true</auto-create-queues>
+   <default-address-routing-type>ANYCAST</default-address-routing-type>
+</address-setting>

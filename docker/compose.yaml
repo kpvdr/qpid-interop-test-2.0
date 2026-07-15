@@ -1,0 +1,30 @@
+services:
+  artemis:
+    image: apache/artemis:latest-alpine
+    container_name: qit-artemis
+    ports:
+      - "5672:5672"   # AMQP
+      - "8161:8161"   # Web console (optional)
+    volumes:
+      # Mount etc-override directory - files will be copied to etc/ after instance creation
+      # :z flag allows SELinux relabeling for container access
+      - ./etc-override:/var/lib/artemis-instance/etc-override:ro,z
+    environment:
+      AMQ_USER: admin
+      AMQ_PASSWORD: admin
+      AMQ_ROLE: admin
+      AMQ_NAME: qit-broker
+      AMQ_TRANSPORTS: amqp
+      AMQ_EXTRA_ARGS: --relax-jolokia
+    healthcheck:
+      test: ["CMD", "/bin/bash", "-c", "[ -f /var/lib/artemis-instance/tmp/artemis.pid ]"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks:
+      - qit-net
+
+networks:
+  qit-net:
+    driver: bridge
