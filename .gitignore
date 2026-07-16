@@ -52,8 +52,14 @@ shims/javascript-rhea/node_modules/
 
 # Test results
 test-results/
-*.xml
+test-results*.xml
+*-results.xml
+junit*.xml
 *.log
+
+# Allow pom.xml files
+!pom.xml
+!**/pom.xml
 
 # Broker
 artemis-local/
