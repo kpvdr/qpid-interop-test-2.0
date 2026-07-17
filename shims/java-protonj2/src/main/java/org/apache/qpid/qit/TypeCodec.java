@@ -82,7 +82,18 @@ public class TypeCodec {
                 return parseDouble(value);
 
             case "char":
-                int codePoint = Integer.parseInt(value.toString());
+                String strValue = value.toString();
+                int codePoint;
+                if (strValue.isEmpty() || strValue.equals("\\x00")) {
+                    // Handle null character
+                    codePoint = 0;
+                } else if (strValue.length() == 1) {
+                    // Handle single character (convert char to code point)
+                    codePoint = strValue.charAt(0);
+                } else {
+                    // Handle numeric code point
+                    codePoint = Integer.parseInt(strValue);
+                }
                 return codePoint;
 
             case "timestamp":

@@ -35,7 +35,7 @@ function parseArgs() {
 // Type encoders - convert JSON test values to AMQP types
 class TypeEncoder {
     static encode(amqpType, testValue) {
-        const value = typeof testValue === 'object' && testValue.value !== undefined
+        const value = typeof testValue === 'object' && testValue !== null && testValue.value !== undefined
             ? testValue.value
             : testValue;
 
