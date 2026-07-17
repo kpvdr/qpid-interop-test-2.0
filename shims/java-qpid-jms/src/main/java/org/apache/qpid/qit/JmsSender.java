@@ -362,7 +362,9 @@ public class JmsSender {
         if (str.startsWith("0x") || str.startsWith("0X")) {
             return Long.parseLong(str.substring(2), 16);
         } else if (str.startsWith("-0x") || str.startsWith("-0X")) {
-            return -Long.parseLong(str.substring(3), 16);
+            // Use parseUnsignedLong for the hex part, then negate
+            // This handles Long.MIN_VALUE (-0x8000000000000000) correctly
+            return -Long.parseUnsignedLong(str.substring(3), 16);
         } else {
             return element.getAsLong();
         }
