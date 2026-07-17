@@ -117,7 +117,16 @@ class SenderHandler(MessagingHandler):
         # Character (UTF-32)
         if amqp_type == "char":
             from proton import char
-            code_point = int(value) if isinstance(value, str) else value
+            if isinstance(value, str):
+                # Handle string representations: empty, escape sequence, or numeric
+                if value == '' or value == '\\x00':
+                    code_point = 0
+                elif len(value) == 1:
+                    code_point = ord(value)
+                else:
+                    code_point = int(value)
+            else:
+                code_point = value
             return char(chr(code_point))
 
         # Timestamp (milliseconds since epoch)
