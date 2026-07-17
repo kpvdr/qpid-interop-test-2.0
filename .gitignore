@@ -48,6 +48,7 @@ shims/cpp-proton/cmake-build-*/
 shims/dotnet-proton/bin/
 shims/dotnet-proton/obj/
 shims/java-protonj2/target/
+shims/java-qpid-jms/target/
 shims/javascript-rhea/node_modules/
 
 # Test results
