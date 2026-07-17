@@ -22,11 +22,14 @@ from proton.reactor import Container
 class SenderHandler(MessagingHandler):
     """Handler for sending AMQP messages."""
 
-    def __init__(self, url: str, queue: str, messages: list[dict[str, Any]]) -> None:
+    def __init__(
+        self, url: str, queue: str, messages: list[dict[str, Any]], jms_mode: bool = False
+    ) -> None:
         super().__init__()
         self.url = url
         self.queue = queue
         self.messages = messages
+        self.jms_mode = jms_mode
         self.sent_count = 0
         self.confirmed_count = 0
 
@@ -41,7 +44,19 @@ class SenderHandler(MessagingHandler):
             msg_data = self.messages[self.sent_count]
             msg = Message()
             msg.id = msg_data["index"]
+
+            # Encode body
             msg.body = self._encode_value(msg_data["type"], msg_data["value"])
+
+            # Add JMS annotations if in JMS mode
+            if self.jms_mode:
+                from proton import ubyte
+
+                # Map type to JMS message type
+                jms_type = self._get_jms_message_type(msg_data["type"])
+                if jms_type is not None:
+                    msg.annotations = {"x-opt-jms-msg-type": ubyte(jms_type)}
+
             event.sender.send(msg)
             self.sent_count += 1
 
@@ -55,6 +70,25 @@ class SenderHandler(MessagingHandler):
         """Handle rejected messages."""
         print(f"Message rejected: {event.delivery.remote}", file=sys.stderr)
         event.connection.close()
+
+    def _get_jms_message_type(self, amqp_type: str) -> int | None:
+        """Map AMQP type to JMS message type byte value."""
+        # JMS message type constants (from Qpid JMS Client)
+        JMS_MESSAGE = 0  # Empty message
+        JMS_TEXT_MESSAGE = 5  # String/text
+        JMS_BYTES_MESSAGE = 3  # Binary data
+
+        # Map AMQP types to JMS message types
+        if amqp_type == "string":
+            return JMS_TEXT_MESSAGE
+        elif amqp_type == "binary":
+            return JMS_BYTES_MESSAGE
+        elif amqp_type == "null":
+            return JMS_MESSAGE
+
+        # Other AMQP types not directly mapped to JMS
+        # (could use BytesMessage encoding for primitives)
+        return None
 
     def _encode_value(self, amqp_type: str, value: Any) -> Any:
         """Encode test value to AMQP type."""
@@ -177,12 +211,22 @@ class ReceiverHandler(MessagingHandler):
         """Process received message."""
         msg = event.message
 
+        # Check for JMS message type annotation
+        jms_msg_type = None
+        if msg.annotations and "x-opt-jms-msg-type" in msg.annotations:
+            jms_msg_type = int(msg.annotations["x-opt-jms-msg-type"])
+
         # Extract message data
-        msg_data = {
-            "index": msg.id if msg.id is not None else len(self.received_messages),
-            "type": self._infer_type(msg.body),
-            "value": self._decode_value(msg.body),
-        }
+        if jms_msg_type is not None:
+            # Decode as JMS message
+            msg_data = self._decode_jms_message(msg, jms_msg_type)
+        else:
+            # Decode as regular AMQP message
+            msg_data = {
+                "index": msg.id if msg.id is not None else len(self.received_messages),
+                "type": self._infer_type(msg.body),
+                "value": self._decode_value(msg.body),
+            }
 
         self.received_messages.append(msg_data)
 
@@ -190,6 +234,47 @@ class ReceiverHandler(MessagingHandler):
         if len(self.received_messages) >= self.expected_count:
             event.receiver.close()
             event.connection.close()
+
+    def _decode_jms_message(self, msg: Message, jms_msg_type: int) -> dict[str, Any]:
+        """Decode JMS message based on message type annotation."""
+        # JMS message type constants
+        JMS_MESSAGE = 0
+        JMS_TEXT_MESSAGE = 5
+        JMS_BYTES_MESSAGE = 3
+        JMS_MAP_MESSAGE = 2
+        JMS_STREAM_MESSAGE = 4
+
+        msg_index = msg.id if msg.id is not None else len(self.received_messages)
+
+        if jms_msg_type == JMS_TEXT_MESSAGE:
+            # TextMessage: body is string in AmqpValue section
+            return {
+                "index": msg_index,
+                "type": "text",  # Use "text" to match JMS shim output
+                "value": str(msg.body) if msg.body is not None else None,
+            }
+        elif jms_msg_type == JMS_BYTES_MESSAGE:
+            # BytesMessage: body is binary in Data section
+            body_val = msg.body
+            if isinstance(body_val, bytes):
+                return {"index": msg_index, "type": "bytes", "value": body_val.hex()}
+            return {"index": msg_index, "type": "bytes", "value": None}
+        elif jms_msg_type == JMS_MESSAGE:
+            # Empty message
+            return {"index": msg_index, "type": "null", "value": None}
+        elif jms_msg_type == JMS_MAP_MESSAGE:
+            # MapMessage: body is map in AmqpValue section
+            return {"index": msg_index, "type": "map", "value": msg.body}
+        elif jms_msg_type == JMS_STREAM_MESSAGE:
+            # StreamMessage: body is list in AmqpSequence section
+            return {"index": msg_index, "type": "list", "value": msg.body}
+        else:
+            # Unknown JMS type, fall back to regular AMQP decoding
+            return {
+                "index": msg_index,
+                "type": self._infer_type(msg.body),
+                "value": self._decode_value(msg.body),
+            }
 
     def _infer_type(self, value: Any) -> str:
         """Infer AMQP type from Python value."""
@@ -302,7 +387,8 @@ class ReceiverHandler(MessagingHandler):
 def send_messages(args: argparse.Namespace) -> None:
     """Send messages via broker."""
     messages = json.loads(args.data)
-    handler = SenderHandler(args.broker, args.queue, messages)
+    jms_mode = getattr(args, "jms_mode", False)
+    handler = SenderHandler(args.broker, args.queue, messages, jms_mode)
     Container(handler).run()
 
     # Output result
@@ -353,6 +439,11 @@ def main() -> None:
     send_parser.add_argument("--type", required=True, help="AMQP type")
     send_parser.add_argument("--count", type=int, required=True, help="Message count")
     send_parser.add_argument("--data", required=True, help="JSON message data")
+    send_parser.add_argument(
+        "--jms-mode",
+        action="store_true",
+        help="Enable JMS message emulation (adds x-opt-jms-msg-type annotation)",
+    )
 
     # Receive command
     recv_parser = subparsers.add_parser("receive", help="Receive messages")
