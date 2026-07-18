@@ -38,6 +38,7 @@ struct CommandLineArgs {
     std::string data;
     int count = 0;
     int timeout = 30;
+    bool jms_mode = false;
 
     bool parse(int argc, char** argv) {
         if (argc < 2) {
@@ -46,13 +47,22 @@ struct CommandLineArgs {
 
         command = argv[1];
 
-        for (int i = 2; i < argc; i += 2) {
+        for (int i = 2; i < argc; ) {
+            std::string opt = argv[i];
+
+            // Check if this is a flag (no value)
+            if (opt == "--jms-mode") {
+                jms_mode = true;
+                i++;
+                continue;
+            }
+
+            // Regular option with value
             if (i + 1 >= argc) {
                 std::cerr << "Error: Missing value for option " << argv[i] << std::endl;
                 return false;
             }
 
-            std::string opt = argv[i];
             std::string val = argv[i + 1];
 
             if (opt == "--broker") {
@@ -71,6 +81,8 @@ struct CommandLineArgs {
                 std::cerr << "Error: Unknown option " << opt << std::endl;
                 return false;
             }
+
+            i += 2;
         }
 
         return validate();
@@ -121,7 +133,7 @@ int main(int argc, char** argv) {
         }
 
         if (args.command == "send") {
-            qit::Sender sender(args.broker, args.queue, args.amqp_type, args.data);
+            qit::Sender sender(args.broker, args.queue, args.amqp_type, args.data, args.jms_mode);
             proton::container(sender).run();
             return 0;
         } else if (args.command == "receive") {

@@ -7,6 +7,8 @@
 #include <proton/delivery.hpp>
 #include <proton/transport.hpp>
 #include <proton/work_queue.hpp>
+#include <proton/annotation_key.hpp>
+#include <proton/symbol.hpp>
 #include <iostream>
 #include <cstdlib>
 
@@ -37,7 +39,23 @@ void Receiver::on_container_start(proton::container& c) {
 
 void Receiver::on_message(proton::delivery& d, proton::message& m) {
     try {
-        Json::Value decoded = TypeCodec::decode(m.body());
+        // Check for JMS message type annotation
+        // NOTE: Qpid JMS Client uses symbol as key
+        int8_t jms_msg_type = -1;
+        proton::annotation_key jms_key(proton::symbol("x-opt-jms-msg-type"));
+        if (m.message_annotations().exists(jms_key)) {
+            proton::value jms_value = m.message_annotations().get(jms_key);
+            jms_msg_type = proton::get<int8_t>(jms_value);
+        }
+
+        Json::Value decoded;
+        if (jms_msg_type >= 0) {
+            // Decode as JMS message
+            decoded = decode_jms_message(m.body(), jms_msg_type);
+        } else {
+            // Decode as regular AMQP message
+            decoded = TypeCodec::decode(m.body());
+        }
 
         Json::Value msg_data;
         msg_data["index"] = static_cast<int>(received_count_);
@@ -60,6 +78,59 @@ void Receiver::on_message(proton::delivery& d, proton::message& m) {
         d.connection().close();
         throw;
     }
+}
+
+Json::Value Receiver::decode_jms_message(const proton::value& body, int8_t jms_msg_type) {
+    // JMS message type constants
+    const int8_t JMS_MESSAGE = 0;
+    const int8_t JMS_TEXT_MESSAGE = 5;
+    const int8_t JMS_BYTES_MESSAGE = 3;
+    const int8_t JMS_MAP_MESSAGE = 2;
+    const int8_t JMS_STREAM_MESSAGE = 4;
+
+    Json::Value result;
+
+    if (jms_msg_type == JMS_TEXT_MESSAGE) {
+        // TextMessage: body is string in AmqpValue section
+        result["type"] = "text";  // Use 'text' to match JMS shim output
+        try {
+            result["value"] = proton::get<std::string>(body);
+        } catch (...) {
+            result["value"] = Json::nullValue;
+        }
+    } else if (jms_msg_type == JMS_BYTES_MESSAGE) {
+        // BytesMessage: body is binary in Data section
+        result["type"] = "bytes";
+        try {
+            proton::binary bin = proton::get<proton::binary>(body);
+            std::string hex;
+            for (uint8_t byte : bin) {
+                char buf[3];
+                snprintf(buf, sizeof(buf), "%02x", byte);
+                hex += buf;
+            }
+            result["value"] = hex;
+        } catch (...) {
+            result["value"] = Json::nullValue;
+        }
+    } else if (jms_msg_type == JMS_MESSAGE) {
+        // Empty message
+        result["type"] = "null";
+        result["value"] = Json::nullValue;
+    } else if (jms_msg_type == JMS_MAP_MESSAGE) {
+        // MapMessage: body is map in AmqpValue section
+        result["type"] = "map";
+        result["value"] = Json::nullValue;  // TODO: proper map decoding
+    } else if (jms_msg_type == JMS_STREAM_MESSAGE) {
+        // StreamMessage: body is list in AmqpSequence section
+        result["type"] = "list";
+        result["value"] = Json::nullValue;  // TODO: proper list decoding
+    } else {
+        // Unknown JMS type, fall back to regular AMQP decoding
+        return TypeCodec::decode(body);
+    }
+
+    return result;
 }
 
 void Receiver::on_timeout() {

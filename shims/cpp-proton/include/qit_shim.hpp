@@ -25,7 +25,8 @@ public:
     Sender(const std::string& broker_url,
            const std::string& queue_name,
            const std::string& amqp_type,
-           const std::string& test_data_json);
+           const std::string& test_data_json,
+           bool jms_mode = false);
 
     void on_container_start(proton::container& c) override;
     void on_sendable(proton::sender& s) override;
@@ -40,6 +41,9 @@ private:
     Json::Value test_values_;
     size_t sent_count_;
     size_t confirmed_count_;
+    bool jms_mode_;
+
+    int8_t get_jms_message_type(const std::string& amqp_type) const;
 };
 
 // Receiver handler - receives messages
@@ -68,6 +72,7 @@ private:
 
     void on_timeout();
     void output_result();
+    Json::Value decode_jms_message(const proton::value& body, int8_t jms_msg_type);
 };
 
 // Type codec - converts between AMQP values and JSON

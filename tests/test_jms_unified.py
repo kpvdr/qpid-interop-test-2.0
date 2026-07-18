@@ -53,7 +53,7 @@ ENABLED_CLIENTS = [
     "python-proton",    # Phase 2b.1 ✅
     "jms",              # Phase 2b.1 ✅
     "javascript-rhea",  # Phase 2b.2 ✅
-    # "cpp-proton",       # Phase 2b.3 (future)
+    "cpp-proton",       # Phase 2b.3 ✅
     # "dotnet-proton",    # Phase 2b.4 (future)
     # "java-protonj2",    # Phase 2b.5 (future)
 ]
@@ -72,8 +72,8 @@ CLIENT_INFO = {
     },
     "cpp-proton": {
         "name": "C++ Proton",
-        "shim_path": "shims/cpp-proton/sender",  # Different pattern
-        "jms_mode": True,  # Will support JMS emulation (Phase 2b.3)
+        "shim_path": "shims/cpp-proton/build/qit-shim-cpp",
+        "jms_mode": True,  # Phase 2b.3 ✅
     },
     "dotnet-proton": {
         "name": ".NET Proton",
@@ -169,8 +169,21 @@ def run_sender(
         ]
         if client_info["jms_mode"]:
             cmd.append("--jms-mode")
+    elif client == "cpp-proton":
+        # C++ sender with JMS emulation
+        cmd = [
+            str(shim_path),
+            "send",
+            "--broker", f"amqp://{broker_url}",
+            "--queue", queue,
+            "--type", "string",
+            "--count", str(len(messages)),
+            "--data", json.dumps(messages),
+        ]
+        if client_info["jms_mode"]:
+            cmd.append("--jms-mode")
     else:
-        # Future: C++, .NET, Java ProtonJ2
+        # Future: .NET, Java ProtonJ2
         pytest.skip(f"Sender for {client} not yet implemented")
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
@@ -221,8 +234,18 @@ def run_receiver(
             "--count", str(count),
             "--timeout", str(timeout),
         ]
+    elif client == "cpp-proton":
+        # C++ receiver (automatically detects JMS annotation)
+        cmd = [
+            str(shim_path),
+            "receive",
+            "--broker", f"amqp://{broker_url}",
+            "--queue", queue,
+            "--count", str(count),
+            "--timeout", str(timeout),
+        ]
     else:
-        # Future: C++, .NET, Java ProtonJ2
+        # Future: .NET, Java ProtonJ2
         pytest.skip(f"Receiver for {client} not yet implemented")
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 10)
