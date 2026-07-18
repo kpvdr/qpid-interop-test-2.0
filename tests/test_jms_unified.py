@@ -50,9 +50,9 @@ TEXT_MESSAGE_VALUES = [
 
 # Enabled clients for testing (incrementally expand)
 ENABLED_CLIENTS = [
-    "python-proton",  # Phase 2b.1 ✅
-    "jms",            # Phase 2b.1 ✅
-    # "javascript-rhea",  # Phase 2b.2 (future)
+    "python-proton",    # Phase 2b.1 ✅
+    "jms",              # Phase 2b.1 ✅
+    "javascript-rhea",  # Phase 2b.2 ✅
     # "cpp-proton",       # Phase 2b.3 (future)
     # "dotnet-proton",    # Phase 2b.4 (future)
     # "java-protonj2",    # Phase 2b.5 (future)
@@ -156,8 +156,21 @@ def run_sender(
         ]
         if client_info["jms_mode"]:
             cmd.append("--jms-mode")
+    elif client == "javascript-rhea":
+        # JavaScript sender with JMS emulation
+        cmd = [
+            "node", str(shim_path),
+            "send",
+            "--broker", f"amqp://{broker_url}",
+            "--queue", queue,
+            "--type", "string",
+            "--count", str(len(messages)),
+            "--data", json.dumps(messages),
+        ]
+        if client_info["jms_mode"]:
+            cmd.append("--jms-mode")
     else:
-        # Future: JavaScript, C++, .NET, Java ProtonJ2
+        # Future: C++, .NET, Java ProtonJ2
         pytest.skip(f"Sender for {client} not yet implemented")
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
@@ -198,8 +211,18 @@ def run_receiver(
             "--count", str(count),
             "--timeout", str(timeout),
         ]
+    elif client == "javascript-rhea":
+        # JavaScript receiver (automatically detects JMS annotation)
+        cmd = [
+            "node", str(shim_path),
+            "receive",
+            "--broker", f"amqp://{broker_url}",
+            "--queue", queue,
+            "--count", str(count),
+            "--timeout", str(timeout),
+        ]
     else:
-        # Future: JavaScript, C++, .NET, Java ProtonJ2
+        # Future: C++, .NET, Java ProtonJ2
         pytest.skip(f"Receiver for {client} not yet implemented")
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 10)

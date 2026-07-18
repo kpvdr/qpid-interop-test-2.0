@@ -22,14 +22,84 @@ function parseArgs() {
 
     const command = args[0];
     const options = {};
+    const flags = [];
 
-    for (let i = 1; i < args.length; i += 2) {
-        const key = args[i].replace('--', '');
-        const value = args[i + 1];
-        options[key] = value;
+    for (let i = 1; i < args.length; i++) {
+        if (args[i].startsWith('--')) {
+            const key = args[i].replace('--', '');
+            // Check if this is a flag (no value) or an option (has value)
+            if (i + 1 < args.length && !args[i + 1].startsWith('--')) {
+                options[key] = args[i + 1];
+                i++; // Skip the value
+            } else {
+                // It's a flag
+                flags.push(key);
+            }
+        }
     }
 
+    // Add flags as boolean options
+    flags.forEach(flag => {
+        options[flag] = true;
+    });
+
     return { command, options };
+}
+
+// JMS message type mapping
+function getJmsMessageType(amqpType) {
+    // JMS message type constants (from Qpid JMS Client)
+    const JMS_MESSAGE = 0;        // Empty message
+    const JMS_TEXT_MESSAGE = 5;   // String/text
+    const JMS_BYTES_MESSAGE = 3;  // Binary data
+
+    // Map AMQP types to JMS message types
+    if (amqpType === 'string') {
+        return JMS_TEXT_MESSAGE;
+    } else if (amqpType === 'binary') {
+        return JMS_BYTES_MESSAGE;
+    } else if (amqpType === 'null') {
+        return JMS_MESSAGE;
+    }
+
+    // Other AMQP types not directly mapped to JMS
+    return null;
+}
+
+// Decode JMS message based on message type annotation
+function decodeJmsMessage(body, jmsMsgType) {
+    // JMS message type constants
+    const JMS_MESSAGE = 0;
+    const JMS_TEXT_MESSAGE = 5;
+    const JMS_BYTES_MESSAGE = 3;
+    const JMS_MAP_MESSAGE = 2;
+    const JMS_STREAM_MESSAGE = 4;
+
+    if (jmsMsgType === JMS_TEXT_MESSAGE) {
+        // TextMessage: body is string in AmqpValue section
+        return {
+            type: 'text',  // Use 'text' to match JMS shim output
+            value: body !== null && body !== undefined ? String(body) : null
+        };
+    } else if (jmsMsgType === JMS_BYTES_MESSAGE) {
+        // BytesMessage: body is binary in Data section
+        if (Buffer.isBuffer(body)) {
+            return { type: 'bytes', value: body.toString('hex') };
+        }
+        return { type: 'bytes', value: null };
+    } else if (jmsMsgType === JMS_MESSAGE) {
+        // Empty message
+        return { type: 'null', value: null };
+    } else if (jmsMsgType === JMS_MAP_MESSAGE) {
+        // MapMessage: body is map in AmqpValue section
+        return { type: 'map', value: body };
+    } else if (jmsMsgType === JMS_STREAM_MESSAGE) {
+        // StreamMessage: body is list in AmqpSequence section
+        return { type: 'list', value: body };
+    } else {
+        // Unknown JMS type, fall back to regular AMQP decoding
+        return TypeDecoder.decode(body);
+    }
 }
 
 // Type encoders - convert JSON test values to AMQP types
@@ -309,7 +379,7 @@ class TypeDecoder {
 
 // Sender
 function send(options) {
-    const { broker, queue, type: amqpType, data } = options;
+    const { broker, queue, type: amqpType, data, 'jms-mode': jmsMode } = options;
     const testData = JSON.parse(data);
 
     let sentCount = 0;
@@ -342,10 +412,24 @@ function send(options) {
                 console.error('Body.type:', body && body.type);
             }
 
-            context.sender.send({
+            const message = {
                 message_id: msgData.index,
                 body: body
-            });
+            };
+
+            // Add JMS annotations if in JMS mode
+            if (jmsMode) {
+                const jmsType = getJmsMessageType(amqpType);
+                if (jmsType !== null) {
+                    // NOTE: Key MUST be Symbol, value MUST be byte (not ubyte)
+                    // This matches Qpid JMS Client wire format
+                    message.message_annotations = {
+                        [Symbol.for('x-opt-jms-msg-type')]: rhea.types.wrap_byte(jmsType)
+                    };
+                }
+            }
+
+            context.sender.send(message);
 
             sentCount++;
         }
@@ -427,28 +511,51 @@ function receive(options) {
 
         const body = context.message.body;
 
+        // Check for JMS message type annotation
+        // NOTE: Qpid JMS Client uses Symbol as key
+        let jmsMsgType = null;
+        if (context.message.message_annotations) {
+            const annotations = context.message.message_annotations;
+            // Try to find the annotation (Symbol key might be represented different ways)
+            const jmsTypeKey = Object.keys(annotations).find(key =>
+                key === 'x-opt-jms-msg-type' ||
+                key.toString() === 'Symbol(x-opt-jms-msg-type)' ||
+                (typeof key === 'symbol' && key.toString().includes('x-opt-jms-msg-type'))
+            );
+            if (jmsTypeKey) {
+                const annotationValue = annotations[jmsTypeKey];
+                jmsMsgType = typeof annotationValue === 'object' && annotationValue.value !== undefined
+                    ? annotationValue.value
+                    : annotationValue;
+            }
+        }
+
         if (process.env.QIT_DEBUG) {
             console.error('Captured', capturedList.length, 'Typed objects during decode');
             capturedList.forEach((cap, i) => {
                 console.error(`  [${i}] Type: ${cap.typeName}, Value: ${JSON.stringify(cap.value)}`);
             });
             console.error('Final body:', body);
+            console.error('JMS message type:', jmsMsgType);
         }
 
-        // Find the Typed object that matches the body value
-        // Strategy: The body should be one of the LAST objects unwrapped
-        // (after headers, properties, annotations, etc.)
-        // Match by value, but prefer later matches
-        let typedBody = null;
-        for (let i = capturedList.length - 1; i >= 0; i--) {
-            const cap = capturedList[i];
-            if (cap.value === body || JSON.stringify(cap.value) === JSON.stringify(body)) {
-                typedBody = cap.typed;
-                break;
+        let decoded;
+        if (jmsMsgType !== null) {
+            // Decode as JMS message
+            decoded = decodeJmsMessage(body, jmsMsgType);
+        } else {
+            // Decode as regular AMQP message
+            // Find the Typed object that matches the body value
+            let typedBody = null;
+            for (let i = capturedList.length - 1; i >= 0; i--) {
+                const cap = capturedList[i];
+                if (cap.value === body || JSON.stringify(cap.value) === JSON.stringify(body)) {
+                    typedBody = cap.typed;
+                    break;
+                }
             }
+            decoded = typedBody ? TypeDecoder.decode(typedBody) : TypeDecoder.decode(body);
         }
-
-        const decoded = typedBody ? TypeDecoder.decode(typedBody) : TypeDecoder.decode(body);
 
         messages.push({
             index: messages.length,
