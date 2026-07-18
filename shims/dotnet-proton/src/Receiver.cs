@@ -44,7 +44,25 @@ namespace Qit.Shim
                     }
 
                     IMessage<object> message = delivery.Message();
-                    var decoded = TypeCodec.Decode(message.Body);
+
+                    // Check for JMS message type annotation
+                    sbyte jmsType = -1;
+                    if (message.HasAnnotation("x-opt-jms-msg-type"))
+                    {
+                        jmsType = Convert.ToSByte(message.GetAnnotation("x-opt-jms-msg-type"));
+                    }
+
+                    DecodedMessage decoded;
+                    if (jmsType >= 0)
+                    {
+                        // Decode as JMS message
+                        decoded = DecodeJmsMessage(message.Body, jmsType);
+                    }
+                    else
+                    {
+                        // Decode as regular AMQP message
+                        decoded = TypeCodec.Decode(message.Body);
+                    }
 
                     messages.Add(new MessageResult
                     {
@@ -79,6 +97,50 @@ namespace Qit.Shim
         {
             var uri = new Uri(broker.StartsWith("amqp://") ? broker : $"amqp://{broker}");
             return (uri.Host, uri.Port > 0 ? uri.Port : 5672);
+        }
+
+        private static DecodedMessage DecodeJmsMessage(object body, sbyte jmsType)
+        {
+            // JMS message type constants
+            const sbyte JMS_MESSAGE = 0;
+            const sbyte JMS_TEXT_MESSAGE = 5;
+            const sbyte JMS_BYTES_MESSAGE = 3;
+            const sbyte JMS_MAP_MESSAGE = 2;
+            const sbyte JMS_STREAM_MESSAGE = 4;
+
+            if (jmsType == JMS_TEXT_MESSAGE)
+            {
+                // TextMessage: body is string in AmqpValue section
+                return new DecodedMessage
+                {
+                    Type = "text",  // Use 'text' to match JMS shim output
+                    Value = body as string
+                };
+            }
+            else if (jmsType == JMS_BYTES_MESSAGE)
+            {
+                // BytesMessage: body is binary in Data section
+                if (body is byte[] bytes)
+                {
+                    return new DecodedMessage
+                    {
+                        Type = "bytes",
+                        Value = BitConverter.ToString(bytes).Replace("-", "").ToLower()
+                    };
+                }
+            }
+            else if (jmsType == JMS_MESSAGE)
+            {
+                // Empty message
+                return new DecodedMessage
+                {
+                    Type = "null",
+                    Value = null
+                };
+            }
+
+            // Unknown JMS type, fall back to regular AMQP decoding
+            return TypeCodec.Decode(body);
         }
     }
 }

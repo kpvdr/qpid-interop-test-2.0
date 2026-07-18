@@ -22,25 +22,27 @@ namespace Qit.Shim
             var sendTypeOption = new Option<string>("--type", "AMQP type") { IsRequired = true };
             var sendCountOption = new Option<int>("--count", "Message count") { IsRequired = false };
             var sendDataOption = new Option<string>("--data", "JSON test data") { IsRequired = true };
+            var sendJmsModeOption = new Option<bool>("--jms-mode", () => false, "Enable JMS emulation mode");
 
             sendCommand.AddOption(sendBrokerOption);
             sendCommand.AddOption(sendQueueOption);
             sendCommand.AddOption(sendTypeOption);
             sendCommand.AddOption(sendCountOption);
             sendCommand.AddOption(sendDataOption);
+            sendCommand.AddOption(sendJmsModeOption);
 
-            sendCommand.SetHandler((broker, queue, type, count, data) =>
+            sendCommand.SetHandler((broker, queue, type, count, data, jmsMode) =>
             {
                 try
                 {
-                    Sender.Send(broker, queue, type, data);
+                    Sender.Send(broker, queue, type, data, jmsMode);
                 }
                 catch (Exception ex)
                 {
                     Console.Error.WriteLine($"Error: {ex.Message}");
                     Environment.Exit(1);
                 }
-            }, sendBrokerOption, sendQueueOption, sendTypeOption, sendCountOption, sendDataOption);
+            }, sendBrokerOption, sendQueueOption, sendTypeOption, sendCountOption, sendDataOption, sendJmsModeOption);
 
             // Receive command
             var receiveCommand = new Command("receive", "Receive AMQP messages");

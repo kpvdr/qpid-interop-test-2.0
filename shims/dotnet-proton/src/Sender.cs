@@ -11,7 +11,7 @@ namespace Qit.Shim
 {
     public static class Sender
     {
-        public static void Send(string broker, string queue, string type, string data)
+        public static void Send(string broker, string queue, string type, string data, bool jmsMode = false)
         {
             try
             {
@@ -39,6 +39,18 @@ namespace Qit.Shim
                     var message = IMessage<object>.Create();
                     message.MessageId = testMsg.Index.ToString();
                     message.Body = TypeCodec.Encode(type, testMsg.Value);
+
+                    // Add JMS annotations if in JMS mode
+                    if (jmsMode)
+                    {
+                        sbyte jmsType = GetJmsMessageType(type);
+                        if (jmsType >= 0)
+                        {
+                            // NOTE: Key MUST be symbol, value MUST be signed byte
+                            // This matches Qpid JMS Client wire format
+                            message.SetAnnotation("x-opt-jms-msg-type", jmsType);
+                        }
+                    }
 
                     sender.Send(message);
 
@@ -70,6 +82,23 @@ namespace Qit.Shim
         {
             var uri = new Uri(broker.StartsWith("amqp://") ? broker : $"amqp://{broker}");
             return (uri.Host, uri.Port > 0 ? uri.Port : 5672);
+        }
+
+        private static sbyte GetJmsMessageType(string amqpType)
+        {
+            // JMS message type constants (from Qpid JMS Client)
+            const sbyte JMS_MESSAGE = 0;        // Empty message
+            const sbyte JMS_TEXT_MESSAGE = 5;   // String/text
+            const sbyte JMS_BYTES_MESSAGE = 3;  // Binary data
+
+            // Map AMQP types to JMS message types
+            return amqpType switch
+            {
+                "string" => JMS_TEXT_MESSAGE,
+                "binary" => JMS_BYTES_MESSAGE,
+                "null" => JMS_MESSAGE,
+                _ => -1  // Invalid
+            };
         }
     }
 
