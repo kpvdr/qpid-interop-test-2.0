@@ -55,7 +55,7 @@ ENABLED_CLIENTS = [
     "javascript-rhea",  # Phase 2b.2 ✅
     "cpp-proton",       # Phase 2b.3 ✅
     "dotnet-proton",    # Phase 2b.4 ✅
-    # "java-protonj2",    # Phase 2b.5 (future)
+    "java-protonj2",    # Phase 2b.5 ✅
 ]
 
 # Client metadata
@@ -82,8 +82,8 @@ CLIENT_INFO = {
     },
     "java-protonj2": {
         "name": "Java ProtonJ2",
-        "shim_path": "shims/java-protonj2/sender.sh",
-        "jms_mode": True,  # Will support JMS emulation (Phase 2b.5)
+        "shim_path": "shims/java-protonj2/shim.sh",
+        "jms_mode": True,  # Phase 2b.5 ✅
     },
     "jms": {
         "name": "Qpid JMS Client",
@@ -195,8 +195,19 @@ def run_sender(
         ]
         if client_info["jms_mode"]:
             cmd.append("--jms-mode")
+    elif client == "java-protonj2":
+        # Java ProtonJ2 sender with JMS emulation
+        cmd = [
+            str(shim_path),
+            "send",
+            "--broker", f"amqp://{broker_url}",
+            "--queue", queue,
+            "--type", "string",
+            "--data", json.dumps(messages),
+        ]
+        if client_info["jms_mode"]:
+            cmd.append("--jms-mode")
     else:
-        # Future: Java ProtonJ2
         pytest.skip(f"Sender for {client} not yet implemented")
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
@@ -267,8 +278,17 @@ def run_receiver(
             "--count", str(count),
             "--timeout", str(timeout),
         ]
+    elif client == "java-protonj2":
+        # Java ProtonJ2 receiver (automatically detects JMS annotation)
+        cmd = [
+            str(shim_path),
+            "receive",
+            "--broker", f"amqp://{broker_url}",
+            "--queue", queue,
+            "--count", str(count),
+            "--timeout", str(timeout),
+        ]
     else:
-        # Future: Java ProtonJ2
         pytest.skip(f"Receiver for {client} not yet implemented")
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 10)

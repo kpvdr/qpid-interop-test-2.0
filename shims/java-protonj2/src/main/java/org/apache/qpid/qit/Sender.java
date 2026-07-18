@@ -24,9 +24,24 @@ public class Sender {
         String queue = null;
         String type = null;
         String data = null;
+        boolean jmsMode = false;
 
-        for (int i = 1; i < args.length; i += 2) {
-            String key = args[i].replace("--", "");
+        for (int i = 1; i < args.length; i++) {
+            String arg = args[i];
+
+            // Check for flags (no value)
+            if ("--jms-mode".equals(arg)) {
+                jmsMode = true;
+                continue;
+            }
+
+            // Regular options (key-value pairs)
+            if (i + 1 >= args.length) {
+                System.err.println("Missing value for option: " + arg);
+                System.exit(1);
+            }
+
+            String key = arg.replace("--", "");
             String value = args[i + 1];
 
             switch (key) {
@@ -43,6 +58,7 @@ public class Sender {
                     data = value;
                     break;
             }
+            i++;  // Skip the value in next iteration
         }
 
         if (broker == null || queue == null || type == null || data == null) {
@@ -77,6 +93,16 @@ public class Sender {
                 Message<Object> message = Message.create();
                 message.messageId(String.valueOf(index));
                 message.body(TypeCodec.encode(type, value));
+
+                // Add JMS annotations if in JMS mode
+                if (jmsMode) {
+                    byte jmsType = getJmsMessageType(type);
+                    if (jmsType >= 0) {
+                        // NOTE: Key MUST be Symbol, value MUST be signed byte
+                        // This matches Qpid JMS Client wire format
+                        message.annotation("x-opt-jms-msg-type", jmsType);
+                    }
+                }
 
                 sender.send(message);
 
@@ -121,5 +147,24 @@ public class Sender {
         }
         URI uri = new URI(broker);
         return uri;
+    }
+
+    private static byte getJmsMessageType(String amqpType) {
+        // JMS message type constants (from Qpid JMS Client)
+        final byte JMS_MESSAGE = 0;        // Empty message
+        final byte JMS_TEXT_MESSAGE = 5;   // String/text
+        final byte JMS_BYTES_MESSAGE = 3;  // Binary data
+
+        // Map AMQP types to JMS message types
+        switch (amqpType) {
+            case "string":
+                return JMS_TEXT_MESSAGE;
+            case "binary":
+                return JMS_BYTES_MESSAGE;
+            case "null":
+                return JMS_MESSAGE;
+            default:
+                return -1;  // Invalid
+        }
     }
 }

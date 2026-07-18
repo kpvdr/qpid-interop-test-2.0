@@ -73,7 +73,24 @@ public class Receiver {
                 }
 
                 Message<?> message = delivery.message();
-                TypeCodec.DecodedMessage decoded = TypeCodec.decode(message.body());
+
+                // Check for JMS message type annotation
+                byte jmsType = -1;
+                if (message.hasAnnotation("x-opt-jms-msg-type")) {
+                    Object annotation = message.annotation("x-opt-jms-msg-type");
+                    if (annotation instanceof Byte) {
+                        jmsType = (Byte) annotation;
+                    }
+                }
+
+                TypeCodec.DecodedMessage decoded;
+                if (jmsType >= 0) {
+                    // Decode as JMS message
+                    decoded = decodeJmsMessage(message.body(), jmsType);
+                } else {
+                    // Decode as regular AMQP message
+                    decoded = TypeCodec.decode(message.body());
+                }
 
                 JsonObject msgResult = new JsonObject();
                 msgResult.addProperty("index", i);
@@ -112,5 +129,48 @@ public class Receiver {
         }
         URI uri = new URI(broker);
         return uri;
+    }
+
+    private static TypeCodec.DecodedMessage decodeJmsMessage(Object body, byte jmsType) {
+        // JMS message type constants
+        final byte JMS_MESSAGE = 0;
+        final byte JMS_TEXT_MESSAGE = 5;
+        final byte JMS_BYTES_MESSAGE = 3;
+
+        if (jmsType == JMS_TEXT_MESSAGE) {
+            // TextMessage: body is string in AmqpValue section
+            TypeCodec.DecodedMessage result = new TypeCodec.DecodedMessage();
+            result.type = "text";  // Use 'text' to match JMS shim output
+            if (body instanceof String) {
+                result.value = new com.google.gson.JsonPrimitive((String) body);
+            } else {
+                result.value = com.google.gson.JsonNull.INSTANCE;
+            }
+            return result;
+        } else if (jmsType == JMS_BYTES_MESSAGE) {
+            // BytesMessage: body is binary in Data section
+            TypeCodec.DecodedMessage result = new TypeCodec.DecodedMessage();
+            result.type = "bytes";
+            if (body instanceof byte[]) {
+                byte[] bytes = (byte[]) body;
+                StringBuilder hex = new StringBuilder();
+                for (byte b : bytes) {
+                    hex.append(String.format("%02x", b));
+                }
+                result.value = new com.google.gson.JsonPrimitive(hex.toString());
+            } else {
+                result.value = com.google.gson.JsonNull.INSTANCE;
+            }
+            return result;
+        } else if (jmsType == JMS_MESSAGE) {
+            // Empty message
+            TypeCodec.DecodedMessage result = new TypeCodec.DecodedMessage();
+            result.type = "null";
+            result.value = com.google.gson.JsonNull.INSTANCE;
+            return result;
+        }
+
+        // Unknown JMS type, fall back to regular AMQP decoding
+        return TypeCodec.decode(body);
     }
 }
