@@ -50,12 +50,14 @@ class SenderHandler(MessagingHandler):
 
             # Add JMS annotations if in JMS mode
             if self.jms_mode:
-                from proton import ubyte
+                from proton import byte, symbol
 
                 # Map type to JMS message type
                 jms_type = self._get_jms_message_type(msg_data["type"])
                 if jms_type is not None:
-                    msg.annotations = {"x-opt-jms-msg-type": ubyte(jms_type)}
+                    # NOTE: Key MUST be symbol, value MUST be byte (not ubyte)
+                    # This matches Qpid JMS Client wire format
+                    msg.annotations = {symbol("x-opt-jms-msg-type"): byte(jms_type)}
 
             event.sender.send(msg)
             self.sent_count += 1
@@ -212,9 +214,13 @@ class ReceiverHandler(MessagingHandler):
         msg = event.message
 
         # Check for JMS message type annotation
+        # NOTE: Qpid JMS Client uses symbol as key
+        from proton import symbol
+
         jms_msg_type = None
-        if msg.annotations and "x-opt-jms-msg-type" in msg.annotations:
-            jms_msg_type = int(msg.annotations["x-opt-jms-msg-type"])
+        annotation_key = symbol("x-opt-jms-msg-type")
+        if msg.annotations and annotation_key in msg.annotations:
+            jms_msg_type = int(msg.annotations[annotation_key])
 
         # Extract message data
         if jms_msg_type is not None:
